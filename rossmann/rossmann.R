@@ -18,38 +18,38 @@ train = train %>% tbl_df() %>% mutate(Date = ymd(train$Date)) %>%
 
 # investigate store level sales
 
-annual_stores = train %>% filter(Customers > 0, Sales > 0) %>%
-  group_by(Store, month) %>% 
-  summarise(a_sales = log1p(sum(Sales)), 
-            a_cust = (mean(log1p(Customers))),
-            ad_sales = mean(log1p(Sales)))
-
-weekly_stores = train %>% filter(Customers > 0, Sales > 0) %>%
-  group_by(Store, week) %>% 
+prior_sales = train %>% filter(Customers > 0, Sales > 0) %>%
+  group_by(Store, year, week) %>%
   summarise(w_sales = log1p(sum(Sales)), 
             w_cust = (mean(log1p(Customers))),
-            wd_sales = mean(log1p(Sales)))
-
-store$Store = as.factor(store$Store)
-
-store = store %>% mutate(logcd = log1p(CompetitionDistance),
-                         compopen = ymd(paste(CompetitionOpenSinceYear,
-                                              CompetitionOpenSinceMonth,'01')))
+            wd_sales = mean(log1p(Sales))) %>% ungroup() %>%
+  mutate(year = factor(as.numeric(as.character(year)) + 1))
 
 
-growth = train %>% filter(month %in% c(1,2,3,4,5,6)) %>% group_by(Store, year) %>%
-  summarise(logS = log(sum(Sales))) %>% spread(year, logS) %>% ungroup() %>%
-  mutate(fourgrowth = `2014` / `2013` - 1)
+annual_stores = train %>% filter(Customers > 0, Sales > 0) %>%
+  group_by(Store, year) %>% 
+  summarise(a_sales = log1p(sum(Sales)), 
+            a_cust = (mean(log1p(Customers))),
+            ad_sales = mean(log1p(Sales))) %>%
+  mutate(year = factor(as.numeric(as.character(year)) + 1))
+
+store$Store = factor(store$Store)
+
+half_year = train %>% filter(month %in% c(1,2,3,4,5,6)) %>% group_by(Store, year) %>%
+  summarise(h_sales = log1p(sum(Sales)), 
+            hd_sales = mean(log1p(Sales))) 
 
 train = train %>%
   mutate(logC = log1p(Customers), logS = log1p(Sales), date = lubridate::day(Date)) %>% 
-  inner_join(annual_stores, by = c('Store','month')) %>%
+  inner_join(annual_stores, by = c('Store','year')) %>%
   inner_join(store, by = 'Store') %>%
-  mutate(compopeninterval = log1p(as.integer(Date - compopen)))
+  inner_join(weekly_stores, by = c('Store','week'))
 
-train = train %>% inner_join(weekly_stores, by = c('Store','week'))
+train = train %>%
+  inner_join(half_year, by = c('Store','year'))
+  
+train$year = factor(train$year)
 
-train = train %>% inner_join(growth, by = 'Store')
 
 # Load test data
 test <- read.csv("~/git/kaggle/rossmann/test.csv")
@@ -65,17 +65,16 @@ test = test %>% tbl_df() %>% mutate(Date = ymd(Date)) %>%
          DayOfWeek = factor(DayOfWeek),
          Store = factor(Store))
 
-test = test %>% 
-  inner_join(annual_stores, by = c('Store','month')) %>%
-  inner_join(store, by = 'Store') %>%
-  mutate(compopeninterval = log1p(as.integer(Date - compopen)))
-
-test = test %>% 
+test = test %>%
+  mutate(date = lubridate::day(Date)) %>% 
+  left_join(annual_stores, by = c('Store','year')) %>%
+  left_join(store, by = 'Store') %>%
   left_join(weekly_stores, by = c('Store','week'))
-  
-test = test %>% mutate(Store = factor(Store),
-                       year = factor(year),
-                       month = factor(month),
+
+test = test %>% inner_join(half_year, by = c('Store','year'))
+
+test = test %>% mutate(year = factor(year),
+                       Store = factor(Store),
                        week = factor(week))
 
 # random forests
@@ -84,7 +83,7 @@ h2o.init(nthreads=-1,max_mem_size='6G')
 
 train_rf = select(train, -Date, -contains('Promo2'), 
                   -contains('CompetitionOpen'), -CompetitionDistance,
-                  -Date, -Sales, -logC, -Customers, -PromoInterval, -compopen)
+                  -Date, -Sales, -logC, -Customers, -PromoInterval)
 
 
 trainHex<-as.h2o(train_rf)
@@ -99,8 +98,8 @@ features<-colnames(train_rf)[!(colnames(train_rf) %in% c("Id","Date","Sales","lo
 
 rfHex <- h2o.randomForest(x=features,
                           y="logS", 
-                          ntrees = 100,
-                          max_depth = 30,
+                          ntrees = 30,
+                          # max_depth = 30,
                           validation = valid,
                           nbins_cats = 1115, ## allow it to fit store ID
                           training_frame=train_rft)
@@ -109,15 +108,15 @@ rfHex <- h2o.randomForest(x=features,
 
 # predict
 
-testRf = test %>% select(-Date, -compopen) %>% mutate(Open = ifelse(is.na(Open), TRUE, Open))
+testRf = test %>% select(-Date) %>% mutate(Open = ifelse(is.na(Open), TRUE, Open))
 
 testHex = as.h2o(as.data.frame(testRf))
 
-predictions<-as.data.frame((h2o.predict(rfHex_noholiday, testHex)))
+predictions<-as.data.frame((h2o.predict(rfHex_half_nok, testHex)))
 
 
 predictions = tbl_df(predictions)
-predictions$predict = exp(predictions$predict)
+predictions$predict = expm1(predictions$predict)
 
 testRf$Sales = predictions$predict
 testRf = testRf %>% mutate(Sales = ifelse(Open==T,Sales,0))
