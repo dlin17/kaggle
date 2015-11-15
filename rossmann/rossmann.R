@@ -1,4 +1,5 @@
 library(dplyr)
+library(h2o)
 library(ggplot2)
 library(lubridate)
 
@@ -25,13 +26,16 @@ prior_sales = train %>% filter(Customers > 0, Sales > 0) %>%
             wd_sales = mean(log1p(Sales))) %>% ungroup() %>%
   mutate(year = factor(as.numeric(as.character(year)) + 1))
 
+prior2_sales = prior_sales %>% mutate(year = factor(as.numeric(as.character(year)) + 1))
 
-annual_stores = train %>% filter(Customers > 0, Sales > 0) %>%
-  group_by(Store, year) %>% 
-  summarise(a_sales = log1p(sum(Sales)), 
-            a_cust = (mean(log1p(Customers))),
-            ad_sales = mean(log1p(Sales))) %>%
-  mutate(year = factor(as.numeric(as.character(year)) + 1))
+colnames(prior2_sales) = c('Store','year','week','w2_sales','w2_cust','w2d_sales')
+
+hist_sales = prior_sales %>% inner_join(prior2_sales, by = c('Store','year','week')) %>%
+  filter(year == '2015') %>%
+  mutate(w_growth = w_sales - w2_sales,
+         wc_growth = w_cust - w2_cust,
+         wd_growth = wd_sales - w2d_sales,
+         year = factor(year))
 
 store$Store = factor(store$Store)
 
@@ -41,13 +45,11 @@ half_year = train %>% filter(month %in% c(1,2,3,4,5,6)) %>% group_by(Store, year
 
 train = train %>%
   mutate(logC = log1p(Customers), logS = log1p(Sales), date = lubridate::day(Date)) %>% 
-  inner_join(annual_stores, by = c('Store','year')) %>%
-  inner_join(store, by = 'Store') %>%
-  inner_join(weekly_stores, by = c('Store','week'))
+  # inner_join(annual_stores, by = c('Store','year')) %>%
+  inner_join(store, by = 'Store') # %>% filter(year == 2015) %>%
+  inner_join(prior_sales, by = c('Store','week','year'))
+  # inner_join(hist_sales, by = c('Store','year','week')) %>% droplevels()
 
-train = train %>%
-  inner_join(half_year, by = c('Store','year'))
-  
 train$year = factor(train$year)
 
 
@@ -67,11 +69,12 @@ test = test %>% tbl_df() %>% mutate(Date = ymd(Date)) %>%
 
 test = test %>%
   mutate(date = lubridate::day(Date)) %>% 
-  left_join(annual_stores, by = c('Store','year')) %>%
+  # left_join(annual_stores, by = c('Store','year')) %>%
   left_join(store, by = 'Store') %>%
-  left_join(weekly_stores, by = c('Store','week'))
+  # left_join(weekly_stores, by = c('Store','week'))
+  left_join(hist_sales, by = c('Store','year','week'))
 
-test = test %>% inner_join(half_year, by = c('Store','year'))
+# test = test %>% inner_join(half_year, by = c('Store','year'))
 
 test = test %>% mutate(year = factor(year),
                        Store = factor(Store),
@@ -112,7 +115,7 @@ testRf = test %>% select(-Date) %>% mutate(Open = ifelse(is.na(Open), TRUE, Open
 
 testHex = as.h2o(as.data.frame(testRf))
 
-predictions<-as.data.frame((h2o.predict(rfHex_half_nok, testHex)))
+predictions<-as.data.frame((h2o.predict(model_2015, testHex)))
 
 
 predictions = tbl_df(predictions)

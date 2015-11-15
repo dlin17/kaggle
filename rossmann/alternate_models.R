@@ -136,18 +136,54 @@ valid = splits[[2]]
 
 features<-colnames(select(train_rf, -logS))
 
-rfHex_half <- h2o.randomForest(x=features,
+rfHex_half_nok <- h2o.randomForest(x=features,
                                 y="logS", 
                                 ntrees = 30,
                                 # max_depth = 30,
                                 validation = valid,
                                 # nbins_cats = 1115, ## allow it to fit store ID
-                                nfolds = 5,
+                                # nfolds = 5,
                                 training_frame=train_rft)
 
 h2o.mse(rfHex_half)
 h2o.mse(rfHex_half, valid = T)
 h2o.varimp(rfHex_half)
+
+
+# 2015 only
+
+h2o.shutdown(prompt = F)
+h2o.init(nthreads=2,max_mem_size='6G')
+
+
+
+train_rf = train %>% filter(Sales > 0, StateHoliday %in% c('0','a')) %>%
+  select(-Sales, -logC, -Customers,
+         -Open, -Date, -contains('Promo2'), -contains('Holiday'), -Store, -contains('cust'),
+         -contains('Competition'), -date, -month, -year, -week)
+
+
+trainHex<-as.h2o(train_rf)
+
+splits = h2o.splitFrame(trainHex, ratios = 0.95)
+train_rft = splits[[1]]
+valid = splits[[2]]
+
+features<-colnames(select(train_rf, -logS))
+
+model_2015 <- h2o.randomForest(x=features,
+                                   y="logS", 
+                                   ntrees = 30,
+                                   # max_depth = 30,
+                                   validation = valid,
+                                   # nbins_cats = 1115, ## allow it to fit store ID
+                                   # nfolds = 5,
+                                   training_frame=train_rft)
+
+h2o.mse(model_2015)
+h2o.mse(model_2015, valid = T)
+h2o.varimp(model_2015)
+
 
 # grid search for depth
 
