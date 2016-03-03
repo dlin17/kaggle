@@ -15,7 +15,7 @@ train = train %>% tbl_df() %>% mutate(Date = ymd(train$Date)) %>%
          Promo = as.logical(Promo),
          SchoolHoliday = as.logical(SchoolHoliday),
          DayOfWeek = factor(DayOfWeek),
-         Store = factor(Store))
+         Store = factor(Store)) %>% arrange(Store, Date)
 
 # investigate store level sales
 
